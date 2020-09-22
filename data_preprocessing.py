@@ -5,14 +5,16 @@ import re
 import spacy
 import scipy
 import os
+import sys
 
 # define hyperparameters
-n_authors = 10
+n_authors = "unlimited"
 min_docs = 50
-max_docs = 100
+min_length = 200
+# get 3 topics instead
 
-if not os.isdir("data/ML_Reddit-{}-{}-{}".format(n_authors,min_docs,max_docs)):
-    os.mkdirs("data/ML_Reddit-{}-{}-{}".format(n_authors,min_docs,max_docs))
+if not os.path.isdir("data/ML_Reddit-{}-{}-{}/clean".format(n_authors,min_docs,min_length)):
+    os.makedirs("data/ML_Reddit-{}-{}-{}/clean".format(n_authors,min_docs,min_length))
 
 keepers = ["how","should","should've","could","can","need","needn","why","few",
 "more","most","all","any","against","because","ought","must","mustn","mustn't",
@@ -23,35 +25,46 @@ for word in set(nltk.corpus.stopwords.words('english')):
         stop.append(str(word))
 
 all_authors = []
-with open("data/ML_Reddit/prolific_authors","r") as authors:
+with open("data/ML_Reddit/prolific_authors","r",encoding='utf-8-sig') as authors:
     for line in authors:
         all_authors.append(line.strip())
 
-author_counts = Counter(all_authors)
+author_counts = {i:0 for i in np.unique(all_authors)}
+
+# sampled_authors = ["MrFlesh","oddmanout","Phrag","NoMoreNicksLeft","permaculture",
+# "aletoledo","thetimeisnow","MyaloMark","mexicodoug","rainman_104","mutatron",
+# "otakucode","cuteman","donh","garyp714","Stormflux","seeker135","dirtymoney","folderol"]
+
+
+
+lengths = []
+with open("data/ML_Reddit/prolific_texts","r",encoding='utf-8-sig') as texts:
+    for idx,line in enumerate(texts):
+        if len(line.strip().split()) >= min_length:
+            author_counts[all_authors[idx]] += 1
+
+
 sampled_authors = []
-counter = 0
-for key in author_counts.keys():
-    if author_counts[key] >= min_docs and author_counts[key] <= max_docs:
-        sampled_authors.append(key)
-    if len(sampled_authors) == n_authors:
-        break
-if len(sampled_authors) < n_authors:
-    raise Exception("only {} authors were found in the specified number of documents range. Consider adjusting the extrema and trying again.".format(len(sampled_authors)))
+for author in author_counts:
+    if author_counts[author] >= min_docs:
+        sampled_authors.append(author)
+
+sampled_texts = []
+comment_author = []
+with open("data/ML_Reddit/prolific_texts","r",encoding='utf-8-sig') as texts, open("data/ML_Reddit-{}-{}-{}/sampled_texts".format(n_authors,min_docs,min_length),"w") as f:
+    for id_,line in enumerate(texts):
+        if all_authors[id_] in sampled_authors:
+            sampled_texts.append(line)
+            comment_author.append(all_authors[id_])
+            print(line.strip(),end="\n",file=f)
+
+print("Number of sampled texts: {}".format(len(sampled_texts)))
 
 author_indices = {}
 for idx,author in enumerate(sampled_authors):
     author_indices[author] = idx
 
-
-sampled_texts = []
-comment_author = []
-with open("data/ML_Reddit-{}-{}-{}/prolific_texts".format(n_authors,min_docs,max_docs),"r") as texts:
-    for idx,line in enumerate(texts):
-        if all_authors[idx] in sampled_authors:
-            sampled_texts.append(line)
-            comment_author.append(all_authors[idx])
-
-with open("data/ML_Reddit-{}-{}-{}/author_map".format(n_authors,min_docs,max_docs),"w") as author_file:
+with open("data/ML_Reddit-{}-{}-{}/clean/author_map.txt".format(n_authors,min_docs,min_length),"w") as author_file:
     for author in sampled_authors:
         print(author.strip(),end="\n",file=author_file)
 
@@ -59,7 +72,7 @@ auth_ind_array = []
 for author in comment_author:
     auth_ind_array.append(author_indices[author])
 np.array(auth_ind_array,dtype=np.float32)
-np.save("data/ML_Reddit-{}-{}-{}/author_indices.npy".format(n_authors,min_docs,max_docs),auth_ind_array)
+np.save("data/ML_Reddit-{}-{}-{}/clean/author_indices.npy".format(n_authors,min_docs,min_length),auth_ind_array)
 
 def _clean(text):
 
@@ -88,21 +101,27 @@ def _clean(text):
 
     return special_free
 
+# load lemmatizer with automatic POS tagging
+lemmatizer = spacy.load('en_core_web_sm', disable=['tagger','parser', 'ner'])
+
 def LDA_clean(text):
 
     special_free = _clean(text)
     # remove stopwords --> check to see if apostrophes are properly encoded
     stop_free = " ".join([i for i in special_free.lower().split() if i.lower() not
                           in stop])
-    # load lemmatizer with automatic POS tagging
-    lemmatizer = spacy.load('en', disable=['parser', 'ner'])
     # Extract the lemma for each token and join
     lemmatized = lemmatizer(stop_free)
     normalized = " ".join([token.lemma_ for token in lemmatized])
     return normalized
 
 vocabulary = {}
-sampled_texts = [LDA_clean(text) for text in sampled_texts]
+for id_,text in enumerate(sampled_texts):
+    if ((id_+1) % 1000) == 0:
+        print(id_+1)
+    sampled_texts[id_] = LDA_clean(text)
+
+print("Text preprocessing finished.")
 
 for text in sampled_texts:
     for word in text.strip().split():
@@ -113,8 +132,10 @@ for text in sampled_texts:
 
 cleaned_vocab = vocabulary.copy()
 for word in vocabulary.keys():
-    if vocabulary[word] > 5:
+    if vocabulary[word] == 1:
         del cleaned_vocab[word]
+
+print("Vocabulary size: {}".format(len(cleaned_vocab)))
 
 vocab_idx2word = {}
 vocab_word2idx = {}
@@ -124,15 +145,21 @@ for word in cleaned_vocab.keys():
     vocab_word2idx[word] = counter
     counter+=1
 
-with open("data/ML_Reddit/vocabulary.txt","w") as vocab_file:
+with open("data/ML_Reddit-{}-{}-{}/clean/vocabulary.txt".format(n_authors,min_docs,min_length),"w") as vocab_file:
     for i in range(len(vocab_idx2word)):
         print(vocab_idx2word[i],end="\n",file=vocab_file)
 
-counts = scipy.sparse.csr_matrix((len(sampled_texts),len(cleaned_vocab)),dtype=np.float32)
+counts = np.zeros((len(sampled_texts),len(cleaned_vocab)),dtype=np.float32)
 
 for idx,text in enumerate(sampled_texts):
+    if ((idx+1) % 1000) == 0:
+        print(idx+1)
     for word in text.strip().split():
         if word in vocab_word2idx.keys():
             counts[idx,vocab_word2idx[word]] += 1
 
-scipy.sparse.save_npz("data/ML_Reddit-{}-{}-{}/counts.npz".format(n_authors,min_docs,max_docs), counts)
+counts = scipy.sparse.csr_matrix(counts,dtype=np.float32)
+
+print("Creating the frequency matrix finished.")
+
+scipy.sparse.save_npz("data/ML_Reddit-{}-{}-{}/clean/counts.npz".format(n_authors,min_docs,min_length), counts)

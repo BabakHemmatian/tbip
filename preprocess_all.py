@@ -61,7 +61,7 @@ with open("200_posts/clean/author_map.txt","w") as author_file:
         print(author.strip(),end="\n",file=author_file)
 
 auth_ind_array = []
-for author in author_counts:
+for author in comment_author:
     auth_ind_array.append(author_indices[author])
 np.array(auth_ind_array,dtype=np.float32)
 np.save("200_posts/clean/author_indices.npy",auth_ind_array)
@@ -153,4 +153,4 @@ for idx,text in enumerate(sampled_texts):
 
 counts = scipy.sparse.csr_matrix(counts,dtype=np.float32)
 
-scipy.sparse.save_npy("200_posts/clean/counts.npz", counts)
+scipy.sparse.save_npz("200_posts/clean/counts.npz", counts)
